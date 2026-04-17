@@ -22,24 +22,42 @@ function Login() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email: email.trim(),   // ✅ FIX 1: remove spaces
+          password: password.trim()
+        }),
       });
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error("Server did not return valid JSON");
+      }
 
       // ❌ backend error handling
       if (!res.ok) {
-        throw new Error(data.error || "Login failed");
+        throw new Error(data.error || "Invalid email or password");
       }
 
-      // ✅ save token
+      if (!data.token) {
+        throw new Error("Login failed: No token received");
+      }
+
+      // ✅ save auth data
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
+      localStorage.setItem("role", data.user?.role || "");
 
       setLoading(false);
 
-      // redirect after login
-      navigate("/");
+      // ✅ redirect based on role
+      if (data.user?.role === "admin") {
+        navigate("/admin/dashboard");
+      } else {
+        navigate("/events");
+      }
+
     } catch (err) {
       setLoading(false);
       setError(err.message);

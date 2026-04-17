@@ -22,11 +22,9 @@ const PORT = process.env.PORT || 8080;
 
 /* ================= MIDDLEWARE ================= */
 app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "https://gutaevents.vercel.app"
-  ],
-  credentials: true
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 app.use(express.json());
