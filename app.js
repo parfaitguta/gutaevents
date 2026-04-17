@@ -15,14 +15,18 @@ const app = express();
 const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
-  console.error("❌ JWT_SECRET is missing in .env");
+  throw new Error("JWT_SECRET is required in .env");
 }
 
 const PORT = process.env.PORT || 8080;
 
 /* ================= MIDDLEWARE ================= */
 app.use(cors({
-  origin: "*"
+  origin: [
+    "http://localhost:3000",
+    "https://gutaevents.vercel.app"
+  ],
+  credentials: true
 }));
 
 app.use(express.json());
@@ -67,7 +71,7 @@ function verifyToken(req, res, next) {
   });
 }
 
-/* ================= ADMIN ================= */
+/* ================= ADMIN MIDDLEWARE ================= */
 function verifyAdmin(req, res, next) {
   if (!req.user || req.user.role !== "admin") {
     return res.status(403).json({ error: "Admin only access" });
@@ -103,9 +107,13 @@ app.post("/login", async (req, res) => {
 
     const user = result.rows[0];
 
+    if (!user || !user.password) {
+      return res.status(500).json({ error: "User data corrupted" });
+    }
+
     let match = false;
 
-    if (user.password.startsWith("$2b$")) {
+    if (user.password && user.password.startsWith("$2b$")) {
       match = await bcrypt.compare(password, user.password);
     } else {
       match = password === user.password;
