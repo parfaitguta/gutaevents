@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const pool = require("./testdb");
@@ -9,25 +11,34 @@ const fs = require("fs");
 
 const app = express();
 
-/* ================= CONFIG ================= */
-const JWT_SECRET = process.env.JWT_SECRET || "guta_events_secret_key";
+/* ================= ENV ================= */
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  console.error("❌ JWT_SECRET is missing in .env");
+}
+
 const PORT = process.env.PORT || 8080;
 
 /* ================= MIDDLEWARE ================= */
-app.use(cors());
+app.use(cors({
+  origin: "*"
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* ================= STATIC FILES ================= */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-/* ================= CREATE UPLOAD FOLDER ================= */
+/* ================= UPLOAD FOLDER ================= */
 const uploadDir = path.join(__dirname, "uploads");
+
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
-/* ================= MULTER CONFIG ================= */
+/* ================= MULTER ================= */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) =>
@@ -56,7 +67,7 @@ function verifyToken(req, res, next) {
   });
 }
 
-/* ================= ADMIN MIDDLEWARE ================= */
+/* ================= ADMIN ================= */
 function verifyAdmin(req, res, next) {
   if (!req.user || req.user.role !== "admin") {
     return res.status(403).json({ error: "Admin only access" });
@@ -77,6 +88,10 @@ app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
     const result = await pool.query(
       "SELECT * FROM users WHERE email=$1",
       [email]
@@ -90,7 +105,7 @@ app.post("/login", async (req, res) => {
 
     let match = false;
 
-    if (user.password?.startsWith("$2b$")) {
+    if (user.password.startsWith("$2b$")) {
       match = await bcrypt.compare(password, user.password);
     } else {
       match = password === user.password;
@@ -110,14 +125,15 @@ app.post("/login", async (req, res) => {
       token,
       user: {
         id: user.id,
-        firstname: user.firstname || "",
-        lastname: user.lastname || "",
+        firstname: user.firstname,
+        lastname: user.lastname,
         email: user.email,
         role: user.role,
-        avatar: user.avatar || null,
-        bio: user.bio || "",
+        avatar: user.avatar,
+        bio: user.bio,
       },
     });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -125,58 +141,70 @@ app.post("/login", async (req, res) => {
 
 /* ================= PROFILE ================= */
 app.get("/me", verifyToken, async (req, res) => {
-  const result = await pool.query(
-    `SELECT id, firstname, lastname, email, bio, avatar
-     FROM users WHERE id=$1`,
-    [req.user.id]
-  );
+  try {
+    const result = await pool.query(
+      `SELECT id, firstname, lastname, email, bio, avatar
+       FROM users WHERE id=$1`,
+      [req.user.id]
+    );
 
-  res.json(result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ================= UPDATE PROFILE ================= */
 app.put("/profile", verifyToken, upload.single("avatar"), async (req, res) => {
-  const { firstname, lastname, bio } = req.body;
+  try {
+    const { firstname, lastname, bio } = req.body;
 
-  const avatar = req.file
-    ? `/uploads/${req.file.filename}`
-    : null;
+    const avatar = req.file ? `/uploads/${req.file.filename}` : undefined;
 
-  const result = await pool.query(
-    `UPDATE users 
-     SET firstname=$1, lastname=$2, bio=$3, avatar=COALESCE($4, avatar)
-     WHERE id=$5
-     RETURNING id, firstname, lastname, email, bio, avatar`,
-    [firstname, lastname, bio, avatar, req.user.id]
-  );
+    const result = await pool.query(
+      `UPDATE users 
+       SET firstname=$1, lastname=$2, bio=$3,
+       avatar = COALESCE($4, avatar)
+       WHERE id=$5
+       RETURNING id, firstname, lastname, email, bio, avatar`,
+      [firstname, lastname, bio, avatar, req.user.id]
+    );
 
-  res.json(result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ================= EVENTS ================= */
 app.get("/events", async (req, res) => {
-  const result = await pool.query(
-    "SELECT * FROM events ORDER BY id ASC"
-  );
-  res.json(result.rows);
+  try {
+    const result = await pool.query(
+      "SELECT * FROM events ORDER BY id ASC"
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/events/:id", async (req, res) => {
-  const result = await pool.query(
-    "SELECT * FROM events WHERE id=$1",
-    [req.params.id]
-  );
+  try {
+    const result = await pool.query(
+      "SELECT * FROM events WHERE id=$1",
+      [req.params.id]
+    );
 
-  res.json(result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-/* ================= ADMIN EVENTS ================= */
-app.post(
-  "/events",
-  verifyToken,
-  verifyAdmin,
-  upload.single("image"),
-  async (req, res) => {
+/* ================= CREATE EVENT ================= */
+app.post("/events", verifyToken, verifyAdmin, upload.single("image"), async (req, res) => {
+  try {
     const { title, location, event_date, price, seats } = req.body;
 
     const image = req.file ? `/uploads/${req.file.filename}` : null;
@@ -189,34 +217,45 @@ app.post(
     );
 
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-);
+});
 
 /* ================= UPDATE EVENT ================= */
 app.put("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
-  const { title, location, event_date, price, seats } = req.body;
+  try {
+    const { title, location, event_date, price, seats } = req.body;
 
-  const result = await pool.query(
-    `UPDATE events 
-     SET title=$1, location=$2, event_date=$3, price=$4, seats=$5
-     WHERE id=$6
-     RETURNING *`,
-    [title, location, event_date, price, seats, req.params.id]
-  );
+    const result = await pool.query(
+      `UPDATE events 
+       SET title=$1, location=$2, event_date=$3, price=$4, seats=$5
+       WHERE id=$6
+       RETURNING *`,
+      [title, location, event_date, price, seats, req.params.id]
+    );
 
-  res.json(result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ================= DELETE EVENT ================= */
 app.delete("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
-  await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
-  res.json({ message: "Event deleted" });
+  try {
+    await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
+    res.json({ message: "Event deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ================= BOOK EVENT ================= */
 app.post("/book", verifyToken, async (req, res) => {
   try {
     const { event_id, tickets } = req.body;
+
     const ticketCount = Number(tickets);
 
     const eventRes = await pool.query(
@@ -250,6 +289,7 @@ app.post("/book", verifyToken, async (req, res) => {
       message: "Booking successful",
       booking: booking.rows[0],
     });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -257,35 +297,23 @@ app.post("/book", verifyToken, async (req, res) => {
 
 /* ================= MY BOOKINGS ================= */
 app.get("/my-bookings", verifyToken, async (req, res) => {
-  const result = await pool.query(
-    `SELECT bookings.id,
-            events.title,
-            events.location,
-            events.event_date,
-            bookings.tickets
-     FROM bookings
-     JOIN events ON bookings.event_id = events.id
-     WHERE bookings.user_id=$1`,
-    [req.user.id]
-  );
+  try {
+    const result = await pool.query(
+      `SELECT bookings.id,
+              events.title,
+              events.location,
+              events.event_date,
+              bookings.tickets
+       FROM bookings
+       JOIN events ON bookings.event_id = events.id
+       WHERE bookings.user_id=$1`,
+      [req.user.id]
+    );
 
-  res.json(result.rows);
-});
-
-/* ================= ADMIN BOOKINGS ================= */
-app.get("/admin/bookings", verifyToken, verifyAdmin, async (req, res) => {
-  const result = await pool.query(
-    `SELECT bookings.id,
-            users.firstname,
-            users.lastname,
-            events.title,
-            bookings.tickets
-     FROM bookings
-     JOIN users ON users.id = bookings.user_id
-     JOIN events ON events.id = bookings.event_id`
-  );
-
-  res.json(result.rows);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ================= ADMIN USERS ================= */
@@ -293,37 +321,8 @@ app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
   const result = await pool.query(
     "SELECT id, firstname, lastname, email, role FROM users ORDER BY id ASC"
   );
+
   res.json(result.rows);
-});
-
-app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
-  await pool.query("DELETE FROM users WHERE id=$1", [req.params.id]);
-  res.json({ message: "User deleted" });
-});
-
-app.put("/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
-  const { role } = req.body;
-
-  const result = await pool.query(
-    "UPDATE users SET role=$1 WHERE id=$2 RETURNING id,email,role",
-    [role, req.params.id]
-  );
-
-  res.json(result.rows[0]);
-});
-
-app.put("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
-  const { firstname, lastname, email } = req.body;
-
-  const result = await pool.query(
-    `UPDATE users 
-     SET firstname=$1, lastname=$2, email=$3
-     WHERE id=$4
-     RETURNING id, firstname, lastname, email, role`,
-    [firstname, lastname, email, req.params.id]
-  );
-
-  res.json(result.rows[0]);
 });
 
 /* ================= START SERVER ================= */
