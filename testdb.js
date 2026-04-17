@@ -1,22 +1,30 @@
-// testdb.js
+require("dotenv").config();
+
 const { Pool } = require("pg");
 
-const DATABASE_URL =
-  "postgresql://postgres.mpgyzrsqkpwpdmzefuks:uAhCymfPbsZk1twv@aws-1-eu-north-1.pooler.supabase.com:5432/gutaevents";
-
+/* ================= DATABASE CONNECTION ================= */
 const pool = new Pool({
-  connectionString: DATABASE_URL,
+  connectionString:
+    process.env.DATABASE_URL ||
+    "postgresql://postgres.mpgyzrsqkpwpdmzefuks:uAhCymfPbsZk1twv@aws-1-eu-north-1.pooler.supabase.com:5432/gutaevents",
+
   ssl: {
-    rejectUnauthorized: false, // Required for Supabase hosted DB
+    rejectUnauthorized: false,
   },
 });
 
-pool.on("connect", () => {
-  console.log("Connected to gutaevents database successfully!");
-});
+/* ================= TEST CONNECTION ================= */
+pool.connect()
+  .then(() => {
+    console.log("Connected to gutaevents database successfully!");
+  })
+  .catch((err) => {
+    console.error("Database connection failed:", err.message);
+  });
 
+/* ================= ERROR HANDLER ================= */
 pool.on("error", (err) => {
-  console.error("Unexpected DB error", err);
+  console.error("Unexpected DB error:", err);
 });
 
 module.exports = pool;
