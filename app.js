@@ -1,209 +1,332 @@
-// app.js
 const express = require("express");
-const pool = require("./testdb"); // PostgreSQL connection
+const cors = require("cors");
+const pool = require("./testdb");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
 const app = express();
 
+/* ================= CONFIG ================= */
+const JWT_SECRET = process.env.JWT_SECRET || "guta_events_secret_key";
+const PORT = process.env.PORT || 8080;
+
+/* ================= MIDDLEWARE ================= */
+app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+/* ================= STATIC FILES ================= */
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+/* ================= CREATE UPLOAD FOLDER ================= */
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
+/* ================= MULTER CONFIG ================= */
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) =>
+    cb(null, Date.now() + path.extname(file.originalname)),
+});
+
+const upload = multer({ storage });
+
+/* ================= AUTH MIDDLEWARE ================= */
+function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(403).json({ error: "No token provided" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
+    req.user = decoded;
+    next();
+  });
+}
+
+/* ================= ADMIN MIDDLEWARE ================= */
+function verifyAdmin(req, res, next) {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({ error: "Admin only access" });
+  }
+  next();
+}
 
 /* ================= HEALTH CHECK ================= */
 app.get("/", (req, res) => {
-  res.send("Guta Events API is running...");
+  res.json({
+    message: "Guta Events API Running 🚀",
+    status: "OK",
+  });
 });
 
-/* ================= USERS ================= */
-
-// GET all users
-app.get("/users", async (req, res) => {
+/* ================= LOGIN ================= */
+app.post("/login", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM users ORDER BY id ASC");
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    const { email, password } = req.body;
 
-// CREATE user
-app.post("/users", async (req, res) => {
-  const { firstname, lastname, email, password } = req.body;
-
-  if (!firstname || !lastname || !email || !password) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
-  try {
-    // prevent duplicate email
-    const check = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
+    const result = await pool.query(
+      "SELECT * FROM users WHERE email=$1",
       [email]
     );
 
-    if (check.rows.length > 0) {
-      return res.status(400).json({ error: "Email already exists" });
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: "Invalid login" });
     }
 
-    const result = await pool.query(
-      "INSERT INTO users (firstname, lastname, email, password) VALUES ($1,$2,$3,$4) RETURNING *",
-      [firstname, lastname, email, password]
+    const user = result.rows[0];
+
+    let match = false;
+
+    if (user.password?.startsWith("$2b$")) {
+      match = await bcrypt.compare(password, user.password);
+    } else {
+      match = password === user.password;
+    }
+
+    if (!match) {
+      return res.status(400).json({ error: "Invalid login" });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "1h" }
     );
 
-    res.status(201).json(result.rows[0]);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        firstname: user.firstname || "",
+        lastname: user.lastname || "",
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar || null,
+        bio: user.bio || "",
+      },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// UPDATE user
-app.put("/users/:id", async (req, res) => {
-  const { id } = req.params;
-  const { firstname, lastname, email, password } = req.body;
+/* ================= PROFILE ================= */
+app.get("/me", verifyToken, async (req, res) => {
+  const result = await pool.query(
+    `SELECT id, firstname, lastname, email, bio, avatar
+     FROM users WHERE id=$1`,
+    [req.user.id]
+  );
 
-  if (!firstname || !lastname || !email || !password) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
-  try {
-    const result = await pool.query(
-      `UPDATE users
-       SET firstname=$1,
-           lastname=$2,
-           email=$3,
-           password=$4
-       WHERE id=$5
-       RETURNING *`,
-      [firstname, lastname, email, password, id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json(result.rows[0]);
 });
 
-// DELETE user
-app.delete("/users/:id", async (req, res) => {
-  const { id } = req.params;
+/* ================= UPDATE PROFILE ================= */
+app.put("/profile", verifyToken, upload.single("avatar"), async (req, res) => {
+  const { firstname, lastname, bio } = req.body;
 
-  try {
-    const result = await pool.query(
-      "DELETE FROM users WHERE id=$1 RETURNING *",
-      [id]
-    );
+  const avatar = req.file
+    ? `/uploads/${req.file.filename}`
+    : null;
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
+  const result = await pool.query(
+    `UPDATE users 
+     SET firstname=$1, lastname=$2, bio=$3, avatar=COALESCE($4, avatar)
+     WHERE id=$5
+     RETURNING id, firstname, lastname, email, bio, avatar`,
+    [firstname, lastname, bio, avatar, req.user.id]
+  );
 
-    res.json({ message: "User deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json(result.rows[0]);
 });
 
 /* ================= EVENTS ================= */
-
-// GET all events
 app.get("/events", async (req, res) => {
-  try {
-    const result = await pool.query("SELECT * FROM events ORDER BY id ASC");
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  const result = await pool.query(
+    "SELECT * FROM events ORDER BY id ASC"
+  );
+  res.json(result.rows);
 });
 
-// CREATE event
-app.post("/events", async (req, res) => {
-  const { title, description, location, event_date, event_time } = req.body;
+app.get("/events/:id", async (req, res) => {
+  const result = await pool.query(
+    "SELECT * FROM events WHERE id=$1",
+    [req.params.id]
+  );
 
-  if (!title || !location || !event_date) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
+  res.json(result.rows[0]);
+});
 
-  try {
+/* ================= ADMIN EVENTS ================= */
+app.post(
+  "/events",
+  verifyToken,
+  verifyAdmin,
+  upload.single("image"),
+  async (req, res) => {
+    const { title, location, event_date, price, seats } = req.body;
+
+    const image = req.file ? `/uploads/${req.file.filename}` : null;
+
     const result = await pool.query(
-      `INSERT INTO events (title, description, location, event_date, event_time)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [title, description || null, location, event_date, event_time || null]
+      `INSERT INTO events (title, location, event_date, price, seats, image)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING *`,
+      [title, location, event_date, price, seats, image]
     );
 
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json(result.rows[0]);
   }
+);
+
+/* ================= UPDATE EVENT ================= */
+app.put("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
+  const { title, location, event_date, price, seats } = req.body;
+
+  const result = await pool.query(
+    `UPDATE events 
+     SET title=$1, location=$2, event_date=$3, price=$4, seats=$5
+     WHERE id=$6
+     RETURNING *`,
+    [title, location, event_date, price, seats, req.params.id]
+  );
+
+  res.json(result.rows[0]);
 });
 
-/* ================= REGISTRATIONS ================= */
-
-// GET all registrations
-app.get("/registrations", async (req, res) => {
-  try {
-    const result = await pool.query("SELECT * FROM registrations ORDER BY id ASC");
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+/* ================= DELETE EVENT ================= */
+app.delete("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
+  await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
+  res.json({ message: "Event deleted" });
 });
 
-// CREATE registration
-app.post("/registrations", async (req, res) => {
-  const { user_id, event_id } = req.body;
-
-  if (!user_id || !event_id) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
+/* ================= BOOK EVENT ================= */
+app.post("/book", verifyToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      "INSERT INTO registrations (user_id, event_id) VALUES ($1,$2) RETURNING *",
-      [user_id, event_id]
+    const { event_id, tickets } = req.body;
+    const ticketCount = Number(tickets);
+
+    const eventRes = await pool.query(
+      "SELECT * FROM events WHERE id=$1",
+      [event_id]
     );
 
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    if (eventRes.rows.length === 0) {
+      return res.status(404).json({ error: "Event not found" });
+    }
 
-/* ================= TICKETS ================= */
+    const event = eventRes.rows[0];
 
-// GET all tickets
-app.get("/tickets", async (req, res) => {
-  try {
-    const result = await pool.query("SELECT * FROM tickets ORDER BY id ASC");
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    if (event.seats < ticketCount) {
+      return res.status(400).json({ error: "Not enough seats" });
+    }
 
-// CREATE ticket
-app.post("/tickets", async (req, res) => {
-  const { user_id, event_id } = req.body;
-
-  if (!user_id || !event_id) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
-  try {
-    const result = await pool.query(
-      "INSERT INTO tickets (user_id, event_id) VALUES ($1,$2) RETURNING *",
-      [user_id, event_id]
+    const booking = await pool.query(
+      `INSERT INTO bookings (user_id,event_id,tickets)
+       VALUES ($1,$2,$3)
+       RETURNING *`,
+      [req.user.id, event_id, ticketCount]
     );
 
-    res.status(201).json(result.rows[0]);
+    await pool.query(
+      `UPDATE events SET seats = seats - $1 WHERE id=$2`,
+      [ticketCount, event_id]
+    );
+
+    res.json({
+      message: "Booking successful",
+      booking: booking.rows[0],
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/* ================= MY BOOKINGS ================= */
+app.get("/my-bookings", verifyToken, async (req, res) => {
+  const result = await pool.query(
+    `SELECT bookings.id,
+            events.title,
+            events.location,
+            events.event_date,
+            bookings.tickets
+     FROM bookings
+     JOIN events ON bookings.event_id = events.id
+     WHERE bookings.user_id=$1`,
+    [req.user.id]
+  );
+
+  res.json(result.rows);
+});
+
+/* ================= ADMIN BOOKINGS ================= */
+app.get("/admin/bookings", verifyToken, verifyAdmin, async (req, res) => {
+  const result = await pool.query(
+    `SELECT bookings.id,
+            users.firstname,
+            users.lastname,
+            events.title,
+            bookings.tickets
+     FROM bookings
+     JOIN users ON users.id = bookings.user_id
+     JOIN events ON events.id = bookings.event_id`
+  );
+
+  res.json(result.rows);
+});
+
+/* ================= ADMIN USERS ================= */
+app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+  const result = await pool.query(
+    "SELECT id, firstname, lastname, email, role FROM users ORDER BY id ASC"
+  );
+  res.json(result.rows);
+});
+
+app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+  await pool.query("DELETE FROM users WHERE id=$1", [req.params.id]);
+  res.json({ message: "User deleted" });
+});
+
+app.put("/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
+  const { role } = req.body;
+
+  const result = await pool.query(
+    "UPDATE users SET role=$1 WHERE id=$2 RETURNING id,email,role",
+    [role, req.params.id]
+  );
+
+  res.json(result.rows[0]);
+});
+
+app.put("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+  const { firstname, lastname, email } = req.body;
+
+  const result = await pool.query(
+    `UPDATE users 
+     SET firstname=$1, lastname=$2, email=$3
+     WHERE id=$4
+     RETURNING id, firstname, lastname, email, role`,
+    [firstname, lastname, email, req.params.id]
+  );
+
+  res.json(result.rows[0]);
 });
 
 /* ================= START SERVER ================= */
-
-const PORT = 8080;
-
-app.listen(PORT, () =>
-  console.log(`Server running at http://localhost:${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+});
