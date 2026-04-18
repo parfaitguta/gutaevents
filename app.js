@@ -12,255 +12,349 @@ const fs = require("fs");
 const app = express();
 
 /* ================= ENV ================= */
+
 const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET is required in .env");
+  throw new Error("JWT_SECRET must exist in .env");
 }
 
 const PORT = process.env.PORT || 8080;
 
 /* ================= MIDDLEWARE ================= */
+
 app.use(cors({
   origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
 }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ================= STATIC FILES ================= */
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+/* ================= STATIC ================= */
+
+app.use("/uploads", express.static(path.join(__dirname,"uploads")));
 
 /* ================= UPLOAD FOLDER ================= */
-const uploadDir = path.join(__dirname, "uploads");
+
+const uploadDir = path.join(__dirname,"uploads");
 
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
 /* ================= MULTER ================= */
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) =>
-    cb(null, Date.now() + path.extname(file.originalname)),
+  destination: (req,file,cb)=>{
+    cb(null,uploadDir);
+  },
+  filename:(req,file,cb)=>{
+    cb(null,Date.now()+path.extname(file.originalname));
+  }
 });
 
-const upload = multer({ storage });
+const upload = multer({storage});
 
 /* ================= AUTH MIDDLEWARE ================= */
-function verifyToken(req, res, next) {
+
+function verifyToken(req,res,next){
+
   const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
-    return res.status(403).json({ error: "No token provided" });
+  if(!authHeader){
+    return res.status(401).json({message:"No token provided"});
   }
 
   const token = authHeader.split(" ")[1];
 
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(401).json({ error: "Invalid token" });
-    }
+  try{
+
+    const decoded = jwt.verify(token,JWT_SECRET);
 
     req.user = decoded;
+
     next();
-  });
+
+  }catch(err){
+
+    return res.status(401).json({message:"Invalid token"});
+  }
 }
 
 /* ================= ADMIN MIDDLEWARE ================= */
-function verifyAdmin(req, res, next) {
-  if (!req.user || req.user.role !== "admin") {
-    return res.status(403).json({ error: "Admin only access" });
+
+function verifyAdmin(req,res,next){
+
+  if(!req.user || req.user.role !== "admin"){
+    return res.status(403).json({message:"Admin access only"});
   }
+
   next();
 }
 
-/* ================= HEALTH CHECK ================= */
-app.get("/", (req, res) => {
+/* ================= HEALTH ================= */
+
+app.get("/",(req,res)=>{
   res.json({
-    message: "Guta Events API Running 🚀",
-    status: "OK",
+    message:"Guta Events API Running 🚀",
+    status:"OK"
   });
 });
 
 /* ================= LOGIN ================= */
-app.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password required" });
+app.post("/login",async(req,res)=>{
+
+  try{
+
+    let {email,password} = req.body;
+
+    if(!email || !password){
+      return res.status(400).json({message:"Email and password required"});
     }
+
+    email = email.trim().toLowerCase();
+    password = password.trim();
 
     const result = await pool.query(
       "SELECT * FROM users WHERE email=$1",
       [email]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(400).json({ error: "Invalid login" });
+    if(result.rows.length === 0){
+      return res.status(400).json({message:"Invalid email or password"});
     }
 
     const user = result.rows[0];
 
-    if (!user || !user.password) {
-      return res.status(500).json({ error: "User data corrupted" });
+    let passwordMatch = false;
+
+    if(user.password.startsWith("$2b$") || user.password.startsWith("$2a$")){
+      passwordMatch = await bcrypt.compare(password,user.password);
+    }else{
+      passwordMatch = password === user.password;
     }
 
-    let match = false;
-
-    if (user.password && user.password.startsWith("$2b$")) {
-      match = await bcrypt.compare(password, user.password);
-    } else {
-      match = password === user.password;
-    }
-
-    if (!match) {
-      return res.status(400).json({ error: "Invalid login" });
+    if(!passwordMatch){
+      return res.status(400).json({message:"Invalid email or password"});
     }
 
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      {id:user.id,role:user.role},
       JWT_SECRET,
-      { expiresIn: "1h" }
+      {expiresIn:"1h"}
     );
 
     res.json({
+      message:"Login successful",
       token,
-      user: {
-        id: user.id,
-        firstname: user.firstname,
-        lastname: user.lastname,
-        email: user.email,
-        role: user.role,
-        avatar: user.avatar,
-        bio: user.bio,
-      },
+      user:{
+        id:user.id,
+        firstname:user.firstname,
+        lastname:user.lastname,
+        email:user.email,
+        role:user.role,
+        avatar:user.avatar,
+        bio:user.bio
+      }
     });
 
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  }catch(err){
+
+    console.error("LOGIN ERROR:",err);
+
+    res.status(500).json({message:"Internal server error"});
   }
 });
 
 /* ================= PROFILE ================= */
-app.get("/me", verifyToken, async (req, res) => {
-  try {
+
+app.get("/me",verifyToken,async(req,res)=>{
+
+  try{
+
     const result = await pool.query(
-      `SELECT id, firstname, lastname, email, bio, avatar
+      `SELECT id,firstname,lastname,email,bio,avatar
        FROM users WHERE id=$1`,
       [req.user.id]
     );
 
     res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= UPDATE PROFILE ================= */
-app.put("/profile", verifyToken, upload.single("avatar"), async (req, res) => {
-  try {
-    const { firstname, lastname, bio } = req.body;
 
-    const avatar = req.file ? `/uploads/${req.file.filename}` : undefined;
+app.put("/profile",verifyToken,upload.single("avatar"),async(req,res)=>{
+
+  try{
+
+    const {firstname,lastname,bio} = req.body;
+
+    const avatar = req.file
+      ? `/uploads/${req.file.filename}`
+      : undefined;
 
     const result = await pool.query(
-      `UPDATE users 
-       SET firstname=$1, lastname=$2, bio=$3,
-       avatar = COALESCE($4, avatar)
+
+      `UPDATE users
+       SET firstname=$1,
+           lastname=$2,
+           bio=$3,
+           avatar = COALESCE($4,avatar)
        WHERE id=$5
-       RETURNING id, firstname, lastname, email, bio, avatar`,
-      [firstname, lastname, bio, avatar, req.user.id]
+       RETURNING id,firstname,lastname,email,bio,avatar`,
+
+      [firstname,lastname,bio,avatar,req.user.id]
     );
 
     res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= EVENTS ================= */
-app.get("/events", async (req, res) => {
-  try {
+
+app.get("/events",async(req,res)=>{
+
+  try{
+
     const result = await pool.query(
       "SELECT * FROM events ORDER BY id ASC"
     );
 
     res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
-app.get("/events/:id", async (req, res) => {
-  try {
+app.get("/events/:id",async(req,res)=>{
+
+  try{
+
     const result = await pool.query(
       "SELECT * FROM events WHERE id=$1",
       [req.params.id]
     );
 
     res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= CREATE EVENT ================= */
-app.post("/events", verifyToken, verifyAdmin, upload.single("image"), async (req, res) => {
-  try {
-    const { title, location, event_date, price, seats } = req.body;
 
-    const image = req.file ? `/uploads/${req.file.filename}` : null;
+app.post(
+  "/events",
+  verifyToken,
+  verifyAdmin,
+  upload.single("image"),
+  async(req,res)=>{
+
+  try{
+
+    const {title,location,event_date,price,seats} = req.body;
+
+    const image = req.file
+      ? `/uploads/${req.file.filename}`
+      : null;
 
     const result = await pool.query(
-      `INSERT INTO events (title, location, event_date, price, seats, image)
-       VALUES ($1,$2,$3,$4,$5,$6)
+
+      `INSERT INTO events(title,location,event_date,price,seats,image)
+       VALUES($1,$2,$3,$4,$5,$6)
        RETURNING *`,
-      [title, location, event_date, price, seats, image]
+
+      [title,location,event_date,price,seats,image]
     );
 
     res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= UPDATE EVENT ================= */
-app.put("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const { title, location, event_date, price, seats } = req.body;
+
+app.put(
+  "/events/:id",
+  verifyToken,
+  verifyAdmin,
+  async(req,res)=>{
+
+  try{
+
+    const {title,location,event_date,price,seats} = req.body;
 
     const result = await pool.query(
-      `UPDATE events 
-       SET title=$1, location=$2, event_date=$3, price=$4, seats=$5
+
+      `UPDATE events
+       SET title=$1,
+           location=$2,
+           event_date=$3,
+           price=$4,
+           seats=$5
        WHERE id=$6
        RETURNING *`,
-      [title, location, event_date, price, seats, req.params.id]
+
+      [title,location,event_date,price,seats,req.params.id]
     );
 
     res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= DELETE EVENT ================= */
-app.delete("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
-    res.json({ message: "Event deleted" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+app.delete(
+  "/events/:id",
+  verifyToken,
+  verifyAdmin,
+  async(req,res)=>{
+
+  try{
+
+    await pool.query(
+      "DELETE FROM events WHERE id=$1",
+      [req.params.id]
+    );
+
+    res.json({message:"Event deleted"});
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= BOOK EVENT ================= */
-app.post("/book", verifyToken, async (req, res) => {
-  try {
-    const { event_id, tickets } = req.body;
+
+app.post("/book",verifyToken,async(req,res)=>{
+
+  try{
+
+    const {event_id,tickets} = req.body;
 
     const ticketCount = Number(tickets);
 
@@ -269,42 +363,49 @@ app.post("/book", verifyToken, async (req, res) => {
       [event_id]
     );
 
-    if (eventRes.rows.length === 0) {
-      return res.status(404).json({ error: "Event not found" });
+    if(eventRes.rows.length === 0){
+      return res.status(404).json({message:"Event not found"});
     }
 
     const event = eventRes.rows[0];
 
-    if (event.seats < ticketCount) {
-      return res.status(400).json({ error: "Not enough seats" });
+    if(event.seats < ticketCount){
+      return res.status(400).json({message:"Not enough seats"});
     }
 
     const booking = await pool.query(
-      `INSERT INTO bookings (user_id,event_id,tickets)
-       VALUES ($1,$2,$3)
+
+      `INSERT INTO bookings(user_id,event_id,tickets)
+       VALUES($1,$2,$3)
        RETURNING *`,
-      [req.user.id, event_id, ticketCount]
+
+      [req.user.id,event_id,ticketCount]
     );
 
     await pool.query(
-      `UPDATE events SET seats = seats - $1 WHERE id=$2`,
-      [ticketCount, event_id]
+      "UPDATE events SET seats = seats - $1 WHERE id=$2",
+      [ticketCount,event_id]
     );
 
     res.json({
-      message: "Booking successful",
-      booking: booking.rows[0],
+      message:"Booking successful",
+      booking:booking.rows[0]
     });
 
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= MY BOOKINGS ================= */
-app.get("/my-bookings", verifyToken, async (req, res) => {
-  try {
+
+app.get("/my-bookings",verifyToken,async(req,res)=>{
+
+  try{
+
     const result = await pool.query(
+
       `SELECT bookings.id,
               events.title,
               events.location,
@@ -313,25 +414,46 @@ app.get("/my-bookings", verifyToken, async (req, res) => {
        FROM bookings
        JOIN events ON bookings.event_id = events.id
        WHERE bookings.user_id=$1`,
+
       [req.user.id]
     );
 
     res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
   }
 });
 
 /* ================= ADMIN USERS ================= */
-app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
-  const result = await pool.query(
-    "SELECT id, firstname, lastname, email, role FROM users ORDER BY id ASC"
-  );
 
-  res.json(result.rows);
+app.get(
+  "/users",
+  verifyToken,
+  verifyAdmin,
+  async(req,res)=>{
+
+  try{
+
+    const result = await pool.query(
+
+      `SELECT id,firstname,lastname,email,role
+       FROM users
+       ORDER BY id ASC`
+    );
+
+    res.json(result.rows);
+
+  }catch(err){
+
+    res.status(500).json({message:err.message});
+  }
 });
 
 /* ================= START SERVER ================= */
-app.listen(PORT, () => {
+
+app.listen(PORT,()=>{
+
   console.log(`Server running at http://localhost:${PORT}`);
 });

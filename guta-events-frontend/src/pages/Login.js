@@ -1,129 +1,131 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API = "https://gutaevents.onrender.com";
-
 function Login() {
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setError("");
-    setLoading(true);
 
     try {
-      const res = await fetch(`${API}/login`, {
+
+      const res = await fetch("https://gutaevents.onrender.com/login", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          email: email.trim(),   // ✅ FIX 1: remove spaces
-          password: password.trim()
-        }),
+          email,
+          password
+        })
       });
 
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error("Server did not return valid JSON");
-      }
+      const data = await res.json();
 
-      // ❌ backend error handling
       if (!res.ok) {
-        throw new Error(data.error || "Invalid email or password");
+        setError(data.message || "Login failed");
+        return;
       }
 
-      if (!data.token) {
-        throw new Error("Login failed: No token received");
-      }
-
-      // ✅ save auth data
+      // save auth
       localStorage.setItem("token", data.token);
+      localStorage.setItem("role", data.user.role);
       localStorage.setItem("user", JSON.stringify(data.user));
-      localStorage.setItem("role", data.user?.role || "");
 
-      setLoading(false);
-
-      // ✅ redirect based on role
-      if (data.user?.role === "admin") {
+      // redirect
+      if (data.user.role === "admin") {
         navigate("/admin/dashboard");
       } else {
-        navigate("/events");
+        navigate("/profile");
       }
 
     } catch (err) {
-      setLoading(false);
-      setError(err.message);
+      console.error(err);
+      setError("Server error");
     }
   };
 
   return (
-    <div style={styles.container}>
-      <h2>Login</h2>
+    <div style={styles.page}>
 
-      <form onSubmit={handleLogin} style={styles.form}>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={styles.input}
-          required
-        />
+      <form style={styles.form} onSubmit={handleLogin}>
 
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={styles.input}
-          required
-        />
+        <h2>Login</h2>
 
         {error && <p style={styles.error}>{error}</p>}
 
-        <button type="submit" disabled={loading} style={styles.button}>
-          {loading ? "Logging in..." : "Login"}
+        <input
+          style={styles.input}
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e)=>setEmail(e.target.value)}
+          required
+        />
+
+        <input
+          style={styles.input}
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e)=>setPassword(e.target.value)}
+          required
+        />
+
+        <button style={styles.button} type="submit">
+          Login
         </button>
+
       </form>
+
     </div>
   );
 }
 
 const styles = {
-  container: {
-    width: "100%",
-    maxWidth: "400px",
-    margin: "auto",
-    padding: "20px",
-    textAlign: "center",
+
+  page:{
+    display:"flex",
+    justifyContent:"center",
+    alignItems:"center",
+    height:"100vh",
+    background:"#f5f5f5"
   },
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
+
+  form:{
+    width:"350px",
+    background:"white",
+    padding:"30px",
+    borderRadius:"10px",
+    display:"flex",
+    flexDirection:"column",
+    gap:"15px"
   },
-  input: {
-    padding: "10px",
-    fontSize: "16px",
+
+  input:{
+    padding:"10px",
+    border:"1px solid #ccc",
+    borderRadius:"6px"
   },
-  button: {
-    padding: "10px",
-    backgroundColor: "#007bff",
-    color: "white",
-    border: "none",
-    cursor: "pointer",
+
+  button:{
+    padding:"12px",
+    background:"#2563eb",
+    color:"white",
+    border:"none",
+    borderRadius:"6px",
+    cursor:"pointer"
   },
-  error: {
-    color: "red",
-  },
+
+  error:{
+    color:"red"
+  }
+
 };
 
 export default Login;
