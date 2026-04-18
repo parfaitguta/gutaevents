@@ -12,6 +12,8 @@ function Login() {
   const handleLogin = async (e) => {
     e.preventDefault();
 
+    setError("");
+
     try {
 
       const res = await fetch("https://gutaevents.onrender.com/login", {
@@ -19,9 +21,10 @@ function Login() {
         headers: {
           "Content-Type": "application/json"
         },
+        credentials: "include",   // important for deployed apps
         body: JSON.stringify({
-          email,
-          password
+          email: email.trim(),
+          password: password
         })
       });
 
@@ -32,7 +35,7 @@ function Login() {
         return;
       }
 
-      // save auth
+      // save token
       localStorage.setItem("token", data.token);
       localStorage.setItem("role", data.user.role);
       localStorage.setItem("user", JSON.stringify(data.user));
@@ -45,8 +48,7 @@ function Login() {
       }
 
     } catch (err) {
-      console.error(err);
-      setError("Server error");
+      setError("Server not responding");
     }
   };
 
@@ -57,27 +59,27 @@ function Login() {
 
         <h2>Login</h2>
 
-        {error && <p style={styles.error}>{error}</p>}
+        {error && <p style={{ color: "red" }}>{error}</p>}
 
         <input
-          style={styles.input}
           type="email"
           placeholder="Email"
           value={email}
           onChange={(e)=>setEmail(e.target.value)}
+          style={styles.input}
           required
         />
 
         <input
-          style={styles.input}
           type="password"
           placeholder="Password"
           value={password}
           onChange={(e)=>setPassword(e.target.value)}
+          style={styles.input}
           required
         />
 
-        <button style={styles.button} type="submit">
+        <button type="submit" style={styles.button}>
           Login
         </button>
 
@@ -88,44 +90,38 @@ function Login() {
 }
 
 const styles = {
-
-  page:{
-    display:"flex",
-    justifyContent:"center",
-    alignItems:"center",
-    height:"100vh",
-    background:"#f5f5f5"
+  page: {
+    height: "100vh",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    background: "#f3f4f6"
   },
 
-  form:{
-    width:"350px",
-    background:"white",
-    padding:"30px",
-    borderRadius:"10px",
-    display:"flex",
-    flexDirection:"column",
-    gap:"15px"
+  form: {
+    width: "350px",
+    padding: "30px",
+    background: "white",
+    borderRadius: "10px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "15px"
   },
 
-  input:{
-    padding:"10px",
-    border:"1px solid #ccc",
-    borderRadius:"6px"
+  input: {
+    padding: "10px",
+    border: "1px solid #ccc",
+    borderRadius: "6px"
   },
 
-  button:{
-    padding:"12px",
-    background:"#2563eb",
-    color:"white",
-    border:"none",
-    borderRadius:"6px",
-    cursor:"pointer"
-  },
-
-  error:{
-    color:"red"
+  button: {
+    padding: "12px",
+    background: "#2563eb",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer"
   }
-
 };
 
 export default Login;

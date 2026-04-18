@@ -62,7 +62,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-/* ================= AUTH ================= */
+/* ================= AUTH MIDDLEWARE ================= */
 
 function verifyToken(req, res, next) {
 
@@ -75,18 +75,15 @@ function verifyToken(req, res, next) {
   const token = authHeader.split(" ")[1];
 
   try {
-
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
-
     next();
-
   } catch (err) {
     return res.status(401).json({ message: "Invalid token" });
   }
 }
 
-/* ================= ADMIN ================= */
+/* ================= ADMIN MIDDLEWARE ================= */
 
 function verifyAdmin(req, res, next) {
 
@@ -106,7 +103,7 @@ app.get("/", (req, res) => {
   });
 });
 
-/* ================= LOGIN ================= */
+/* ================= LOGIN (FIXED 100%) ================= */
 
 app.post("/login", async (req, res) => {
 
@@ -118,12 +115,11 @@ app.post("/login", async (req, res) => {
       return res.status(400).json({ message: "Email and password required" });
     }
 
-    email = email.trim().toLowerCase();
-    password = password.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
     const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
-      [email]
+      "SELECT * FROM users WHERE LOWER(email) = LOWER($1)",
+      [cleanEmail]
     );
 
     if (result.rows.length === 0) {
@@ -132,12 +128,17 @@ app.post("/login", async (req, res) => {
 
     const user = result.rows[0];
 
+    const cleanPassword = password.toString();
+
     let match = false;
 
-    if (user.password.startsWith("$2b$") || user.password.startsWith("$2a$")) {
-      match = await bcrypt.compare(password, user.password);
+    if (
+      user.password.startsWith("$2b$") ||
+      user.password.startsWith("$2a$")
+    ) {
+      match = await bcrypt.compare(cleanPassword, user.password);
     } else {
-      match = password === user.password;
+      match = cleanPassword === user.password.toString();
     }
 
     if (!match) {
@@ -224,13 +225,8 @@ app.put("/profile", verifyToken, upload.single("avatar"), async (req, res) => {
 app.get("/events", async (req, res) => {
 
   try {
-
-    const result = await pool.query(
-      "SELECT * FROM events ORDER BY id ASC"
-    );
-
+    const result = await pool.query("SELECT * FROM events ORDER BY id ASC");
     res.json(result.rows);
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -239,7 +235,6 @@ app.get("/events", async (req, res) => {
 app.get("/events/:id", async (req, res) => {
 
   try {
-
     const result = await pool.query(
       "SELECT * FROM events WHERE id=$1",
       [req.params.id]
@@ -308,14 +303,8 @@ app.put("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
 app.delete("/events/:id", verifyToken, verifyAdmin, async (req, res) => {
 
   try {
-
-    await pool.query(
-      "DELETE FROM events WHERE id=$1",
-      [req.params.id]
-    );
-
+    await pool.query("DELETE FROM events WHERE id=$1", [req.params.id]);
     res.json({ message: "Event deleted" });
-
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -393,7 +382,7 @@ app.get("/my-bookings", verifyToken, async (req, res) => {
   }
 });
 
-/* ================= USERS (ADMIN) ================= */
+/* ================= USERS ================= */
 
 app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
 
